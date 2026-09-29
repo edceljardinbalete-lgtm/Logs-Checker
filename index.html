@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log Reader</title>
+<style>
+:root{
+  --bg:#f5f6fa;--panel:#fff;--panel2:#f0f2f7;--border:#dfe3ec;--text:#1d2433;--muted:#6b7488;
+  --accent:#2563eb;--accent-soft:#e6eeff;--ok:#16a34a;--ok-soft:#e3f6ea;--err:#dc2626;--err-soft:#fde8e8;
+  --warn:#d97706;--warn-soft:#fdf1dc;--mark:#fde68a;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+[data-theme=dark]{
+  --bg:#0f1420;--panel:#171d2c;--panel2:#1e2638;--border:#2a3349;--text:#e4e8f2;--muted:#8b95ac;
+  --accent:#6d9bff;--accent-soft:#1f2c4d;--ok:#4ade80;--ok-soft:#153323;--err:#f87171;--err-soft:#3b1a1f;
+  --warn:#fbbf24;--warn-soft:#3a2d12;--mark:#6b5a10;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--border)}
+header h1{font-size:16px;margin:0;display:flex;align-items:center;gap:8px}
+header h1 .logo{width:26px;height:26px;border-radius:7px;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:14px}
+.spacer{flex:1}
+.btn{border:1px solid var(--border);background:var(--panel);padding:6px 12px;border-radius:8px;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--panel2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.sm{padding:3px 8px;font-size:12px}
+.btn.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+input[type=search],input[type=text],select{border:1px solid var(--border);background:var(--panel);border-radius:8px;padding:6px 10px;outline:none}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+main{flex:1;display:flex;min-height:0}
+aside{width:280px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+aside h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:14px 14px 6px}
+.drop{margin:12px;border:2px dashed var(--border);border-radius:12px;padding:16px 10px;text-align:center;color:var(--muted);transition:.15s}
+.drop.over{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.drop b{display:block;color:var(--text);margin-bottom:2px}
+.files{overflow:auto;flex:1;padding:0 8px 8px}
+.file{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;cursor:pointer}
+.file:hover{background:var(--panel2)}
+.file.sel{background:var(--accent-soft)}
+.file .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file .meta{font-size:11px;color:var(--muted)}
+.file .x{border:0;background:none;color:var(--muted);padding:0 4px;border-radius:4px}
+.file .x:hover{color:var(--err)}
+.empty-note{color:var(--muted);padding:6px 14px;font-size:13px}
+section.content{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+.tabs{display:flex;gap:4px;padding:8px 16px 0;background:var(--panel);border-bottom:1px solid var(--border)}
+.tab{border:0;background:none;padding:9px 14px;border-bottom:3px solid transparent;color:var(--muted);font-weight:600;display:flex;gap:8px;align-items:center}
+.tab:hover{color:var(--text)}
+.tab.on{color:var(--accent);border-color:var(--accent)}
+.badge{background:var(--panel2);color:var(--muted);border-radius:99px;padding:0 8px;font-size:11px;font-weight:600}
+.badge.err{background:var(--err-soft);color:var(--err)}
+.pane{flex:1;min-height:0;display:none}
+.pane.on{display:flex}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--border)}
+.toolbar .count{color:var(--muted);font-size:12px}
+.col{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}
+/* welcome */
+.welcome{margin:auto;text-align:center;max-width:460px;color:var(--muted);padding:24px}
+.welcome .big{font-size:44px}
+.welcome h2{color:var(--text);margin:8px 0}
+/* transactions */
+.split{display:flex;flex:1;min-height:0}
+.txlist{width:360px;overflow:auto;border-right:1px solid var(--border);background:var(--panel)}
+.tx{padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;border-left:4px solid transparent}
+.tx:hover{background:var(--panel2)}
+.tx.sel{background:var(--accent-soft);border-left-color:var(--accent)}
+.tx .top{display:flex;justify-content:space-between;gap:8px;font-weight:600}
+.tx .sub{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-top:2px}
+.pill{border-radius:99px;padding:0 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.pill.approved{background:var(--ok-soft);color:var(--ok)}
+.pill.failed{background:var(--err-soft);color:var(--err)}
+.pill.unknown{background:var(--panel2);color:var(--muted)}
+.txdetail{flex:1;overflow:auto;padding:18px 24px;min-width:0}
+.txhead{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:14px}
+.txhead h2{margin:0;font-size:18px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:18px}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px 12px}
+.stat .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.stat .v{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.timeline{position:relative;margin-left:8px;border-left:2px solid var(--border);padding-left:20px}
+.step{position:relative;margin-bottom:8px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px 12px}
+.step::before{content:"";position:absolute;left:-29px;top:14px;width:12px;height:12px;border-radius:50%;background:var(--accent);border:2px solid var(--bg)}
+.step.err{border-color:var(--err);background:var(--err-soft)}
+.step.err::before{background:var(--err)}
+.step.warn::before{background:var(--warn)}
+.step .h{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.actor{background:var(--panel2);color:var(--text);border-radius:6px;padding:0 6px;font-weight:600;font-size:11px}
+.step .msg{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break:break-word;margin-top:3px}
+.step .go{margin-left:auto}
+.step.receipt .msg{background:var(--panel2);border-radius:6px;padding:6px 8px}
+/* errors */
+.errlist{flex:1;overflow:auto;padding:12px 16px}
+.errrow{display:flex;gap:10px;background:var(--panel);border:1px solid var(--border);border-left:4px solid var(--err);border-radius:8px;padding:8px 12px;margin-bottom:8px}
+.errrow.warn{border-left-color:var(--warn)}
+.errrow .body{flex:1;min-width:0}
+.errrow .msg{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break:break-word}
+.errrow .h{font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;margin-bottom:2px}
+.chip{border:1px solid var(--border);background:var(--panel);border-radius:99px;padding:2px 10px;font-size:12px}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+/* raw */
+.rawwrap{flex:1;min-height:0;position:relative;background:var(--panel)}
+.rawscroll{position:absolute;inset:0;overflow:auto;font-family:var(--mono);font-size:12.5px}
+.rawinner{position:relative}
+.rl{position:absolute;left:0;right:0;height:20px;line-height:20px;white-space:pre;display:flex}
+.rl:hover{background:var(--panel2)}
+.rl .n{flex:none;width:64px;text-align:right;padding-right:10px;color:var(--muted);user-select:none;border-right:1px solid var(--border);position:sticky;left:0;background:inherit}
+.rl .t{flex:none;width:170px;padding:0 8px;color:var(--muted)}
+.rl .lv{flex:none;width:52px;font-weight:700;text-align:center}
+.rl .m{padding:0 10px;flex:none}
+.rl.E{background:var(--err-soft)} .rl.W{background:var(--warn-soft)}
+.rl.hit{outline:2px solid var(--accent);outline-offset:-2px}
+.lv.E{color:var(--err)} .lv.W{color:var(--warn)} .lv.I{color:var(--ok)} .lv.D{color:var(--muted)}
+mark{background:var(--mark);color:inherit;border-radius:2px}
+.statusbar{padding:4px 16px;font-size:12px;color:var(--muted);background:var(--panel);border-top:1px solid var(--border);display:flex;gap:16px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:8px 16px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none}
+.toast.on{opacity:1}
+dialog{border:1px solid var(--border);border-radius:14px;background:var(--panel);color:var(--text);padding:20px;max-width:560px;width:90%}
+dialog::backdrop{background:#0008}
+dialog h3{margin-top:0}
+kbd{background:var(--panel2);border:1px solid var(--border);border-bottom-width:2px;border-radius:5px;padding:0 6px;font-size:12px}
+@media(max-width:860px){aside{display:none}.txlist{width:40%}}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="logo">≡</span> Log Reader</h1>
+  <span class="spacer"></span>
+  <button class="btn" id="helpBtn" title="Help &amp; shortcuts">? Help</button>
+  <button class="btn" id="themeBtn" title="Toggle dark mode">🌓</button>
+  <button class="btn primary" id="browseBtn">＋ Open logs</button>
+  <input type="file" id="fileInput" multiple hidden accept=".log,.txt,.zip,.tgz,.gz,.out,.csv,*/*">
+</header>
+<main>
+  <aside>
+    <div class="drop" id="drop"><b>Drop log files here</b>.log, .txt, .zip, .tgz — or click to browse</div>
+    <h2>Files <span id="fileCount"></span></h2>
+    <div class="files" id="files"></div>
+  </aside>
+  <section class="content">
+    <div class="tabs" id="tabs">
+      <button class="tab on" data-tab="tx">Transactions <span class="badge" id="bTx">0</span></button>
+      <button class="tab" data-tab="err">Errors <span class="badge" id="bErr">0</span></button>
+      <button class="tab" data-tab="raw">Raw logs <span class="badge" id="bRaw">0</span></button>
+    </div>
+
+    <div class="pane on" id="pane-tx">
+      <div class="col">
+        <div class="toolbar">
+          <input type="search" id="txSearch" placeholder="Search transactions (id, text, amount)…" size="34">
+          <select id="txStatus"><option value="">All statuses</option><option value="approved">Approved</option><option value="failed">Failed</option><option value="unknown">Unknown</option></select>
+          <span class="count" id="txCount"></span>
+        </div>
+        <div class="split">
+          <div class="txlist" id="txList"></div>
+          <div class="txdetail" id="txDetail"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-err">
+      <div class="col">
+        <div class="toolbar">
+          <input type="search" id="errSearch" placeholder="Filter errors…" size="30">
+          <span id="errChips"></span>
+          <span class="count" id="errCount"></span>
+        </div>
+        <div class="errlist" id="errList"></div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-raw">
+      <div class="col">
+        <div class="toolbar">
+          <select id="rawFile" title="File"></select>
+          <input type="search" id="rawSearch" placeholder="Search in file…  ( / )" size="28">
+          <button class="btn sm" id="prevHit" title="Previous match (Shift+Enter)">▲</button>
+          <button class="btn sm" id="nextHit" title="Next match (Enter)">▼</button>
+          <span class="count" id="hitCount"></span>
+          <select id="rawLevel"><option value="">All levels</option><option value="E">Errors</option><option value="W">Warnings+</option></select>
+          <button class="btn sm" id="viewMode" title="Toggle table / plain text">Table view</button>
+          <button class="btn sm" id="wrapBtn">Wrap off</button>
+          <span class="spacer"></span>
+          <button class="btn sm" id="copyBtn">Copy</button>
+          <button class="btn sm" id="dlBtn">Download</button>
+        </div>
+        <div class="rawwrap"><div class="rawscroll" id="rawScroll"><div class="rawinner" id="rawInner"></div></div></div>
+        <div class="statusbar"><span id="rawInfo"></span></div>
+      </div>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<dialog id="help">
+  <h3>Log Reader</h3>
+  <p>Open one or more log files (or an archive). Everything is parsed locally in your browser — nothing is uploaded.</p>
+  <ul>
+    <li><b>Transactions</b> — lines grouped by invoice / receipt / session id into a step-by-step timeline.</li>
+    <li><b>Errors</b> — every error, exception, timeout and decline in one place.</li>
+    <li><b>Raw logs</b> — the untouched files you selected, with search and level filter.</li>
+  </ul>
+  <p><kbd>/</kbd> search &nbsp; <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> switch tabs &nbsp; <kbd>Enter</kbd> next match &nbsp; <kbd>Esc</kbd> clear search</p>
+  <p style="text-align:right"><button class="btn primary" onclick="this.closest('dialog').close()">Got it</button></p>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const state = { files: [], sel: -1, txs: [], errors: [], txSel: null, errType: 'all', tab: 'tx' };
+let fid = 0;
+
+/* ---------- toast / theme / help ---------- */
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('on'); clearTimeout(toast.h); toast.h=setTimeout(()=>t.classList.remove('on'),2200); }
+const savedTheme = localStorage.getItem('lr-theme') || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
+document.documentElement.dataset.theme = savedTheme;
+$('themeBtn').onclick = () => { const d=document.documentElement; d.dataset.theme = d.dataset.theme==='dark'?'light':'dark'; localStorage.setItem('lr-theme', d.dataset.theme); };
+$('helpBtn').onclick = () => $('help').showModal();
+
+/* ---------- file intake ---------- */
+$('browseBtn').onclick = () => $('fileInput').click();
+$('drop').onclick = () => $('fileInput').click();
+$('fileInput').onchange = e => { ingest([...e.target.files]); e.target.value=''; };
+['dragenter','dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave','drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if(ev==='drop' || e.target===document.documentElement) $('drop').classList.remove('over'); }));
+document.addEventListener('drop', e => { if (e.dataTransfer?.files?.length) ingest([...e.dataTransfer.files]); });
+
+async function ingest(list){
+  let added = 0;
+  for (const f of list) {
+    try {
+      const entries = await expand(f.name, new Uint8Array(await f.arrayBuffer()), 0);
+      for (const [name, text] of entries) { addFile(name, text); added++; }
+    } catch (err) { console.error(err); toast(`Could not read ${f.name}: ${err.message}`); }
+  }
+  if (!added) return;
+  if (state.sel < 0) state.sel = 0;
+  rebuild();
+  toast(`Loaded ${added} file${added>1?'s':''}`);
+}
+
+const decode = bytes => new TextDecoder('utf-8').decode(bytes);
+async function expand(name, bytes, depth){
+  const low = name.toLowerCase();
+  if (depth > 4) return [];
+  if (low.endsWith('.zip')) {
+    if (!window.JSZip) throw new Error('JSZip library not loaded (offline?)');
+    const zip = await JSZip.loadAsync(bytes), out = [];
+    for (const e of Object.values(zip.files)) {
+      if (e.dir) continue;
+      out.push(...await expand(`${name}/${e.name}`, await e.async('uint8array'), depth+1));
+    }
+    return out;
+  }
+  if (low.endsWith('.tgz') || low.endsWith('.tar.gz') || low.endsWith('.gz') || (bytes[0]===0x1f && bytes[1]===0x8b)) {
+    if (!window.pako) throw new Error('pako library not loaded (offline?)');
+    const raw = pako.ungzip(bytes);
+    if (low.endsWith('.gz') && !low.endsWith('.tar.gz') && !isTar(raw)) return [[name.replace(/\.gz$/i,''), decode(raw)]];
+    return untar(name, raw, depth);
+  }
+  if (isTar(bytes)) return untar(name, bytes, depth);
+  if (looksBinary(bytes)) return [];
+  return [[name, decode(bytes)]];
+}
+function looksBinary(b){ const n=Math.min(b.length,4000); let z=0; for(let i=0;i<n;i++) if(b[i]===0) z++; return z>n*0.02; }
+function isTar(b){ return b.length>512 && decode(b.subarray(257,262))==='ustar'; }
+async function untar(base, b, depth){
+  const out=[]; let p=0, longName=null;
+  while (p+512 <= b.length) {
+    const h=b.subarray(p,p+512); if (h.every(x=>x===0)) break;
+    let name=decode(h.subarray(0,100)).replace(/\0.*$/,'');
+    const size=parseInt(decode(h.subarray(124,136)).replace(/\0.*$/,'').trim()||'0',8);
+    const type=String.fromCharCode(h[156]||48);
+    const pre=decode(h.subarray(345,500)).replace(/\0.*$/,''); if(pre) name=pre+'/'+name;
+    const data=b.subarray(p+512,p+512+size);
+    if (type==='L') longName=decode(data).replace(/\0.*$/,'');
+    else { if (longName){name=longName;longName=null;} if (type==='0'||type==='\0') out.push(...await expand(`${base}/${name}`, data, depth+1)); }
+    p += 512 + Math.ceil(size/512)*512;
+  }
+  return out;
+}
+
+/* ---------- parsing ---------- */
+const TS_RES = [
+  /^\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?)(?:Z|[+-]\d{2}:?\d{2})?\]?/,            // 2026-09-16 12:00:01.123
+  /^(\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{3})/,                                                             // logcat
+  /^([A-Z][a-z]{2}\s+\d{1,2}\s\d{2}:\d{2}:\d{2})/,                                                        // syslog
+  /^\[?(\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?)\]?/,                                                           // time only
+];
+const LEVEL_RE = /(?:^|[\s\[|/:<])(FATAL|CRITICAL|CRIT|SEVERE|ERROR|ERR|FAIL(?:URE|ED)?|WARNING|WARN|INFO|DEBUG|TRACE|VERBOSE)(?=$|[\s\]|:>])/i;
+const LOGCAT_LV = /^\S+\s+\S+\s+\d+\s+\d+\s+([VDIWEF])\s/;
+const ERR_KW = /exception|traceback|panic|fatal|segfault|\bANR in\b|avc:\s*denied|declin|time-?out|timed out|connection (?:refused|reset|failed)|comm(?:unication)? (?:error|fail)|handshake fail|ssl|tls.*(?:fail|error)|unable to|cannot |could not|not (?:authorized|approved)|\bfail(?:ed|ure)?\b|\berror\b/i;
+const WARN_KW = /\bwarn(?:ing)?\b|retry|retrying|deprecated/i;
+
+function classify(line){
+  let lv='';
+  const lc = line.match(LOGCAT_LV);
+  if (lc) lv = {V:'D',D:'D',I:'I',W:'W',E:'E',F:'E'}[lc[1]];
+  else {
+    const m = line.match(LEVEL_RE);
+    if (m) { const k=m[1].toUpperCase(); lv = /^(FATAL|CRIT|SEVERE|ERR|FAIL)/.test(k)?'E' : k.startsWith('WARN')?'W' : /^(DEBUG|TRACE|VERB)/.test(k)?'D':'I'; }
+  }
+  return lv;
+}
+function parseTs(line){
+  for (const re of TS_RES) { const m=line.match(re); if (m) return {ts:m[1], len:m[0].length}; }
+  return null;
+}
+function tsToMs(ts){
+  if (!ts) return NaN;
+  const t = ts.replace(',', '.').replace('T',' ').replace(/\//g,'-');
+  let d = new Date(/^\d{4}/.test(t) ? t.replace(' ','T') : /^\d{2}:/.test(t) ? '1970-01-01T'+t : NaN);
+  if (!isNaN(d)) return d.getTime();
+  const m = ts.match(/^(\d{2})-(\d{2}) (\d{2}:\d{2}:\d{2}\.\d{3})/);
+  if (m) return new Date(`2000-${m[1]}-${m[2]}T${m[3]}`).getTime();
+  return NaN;
+}
+
+function addFile(name, text){
+  const raw = text.replace(/\r\n?/g,'\n').split('\n');
+  if (raw.length && raw[raw.length-1]==='') raw.pop();
+  const lines = raw.map((s,i) => { const t=parseTs(s); return { n:i+1, s, ts:t?t.ts:'', lv:classify(s), start:!!t }; });
+  // continuation lines inherit level of their parent entry; group into multi-line entries
+  const entries=[]; let cur=null;
+  for (const l of lines) {
+    if (l.start || !cur) { cur={ file:0, first:l.n, last:l.n, ts:l.ts, ms:tsToMs(l.ts), lv:l.lv, text:l.s }; entries.push(cur); }
+    else { cur.last=l.n; cur.text+='\n'+l.s; if(!cur.lv) cur.lv=l.lv; l.cont=true; l.lv=l.lv||''; }
+  }
+  const f = { id:++fid, name, short:name.split('/').pop(), path:name, lines, entries, text:raw.join('\n'), size:text.length };
+  entries.forEach(e => e.file=f.id);
+  state.files.push(f);
+}
+
+/* ---------- transactions ---------- */
+const ID_RES = [
+  ['Invoice', /\bInv(?:oice)?\s*(?:#|no\.?|num(?:ber)?)?\s*[:=#]?\s*(\d{2,})/i],
+  ['Eps',     /\bEps\s*(?:#|no\.?)?\s*[:=#]?\s*(\d{2,})/i],
+  ['Receipt', /\bReceipt\s*(?:#|no\.?|num(?:ber)?)?\s*[:=#]?\s*(\d{2,})/i],
+  ['Txn',     /\b(?:Trans(?:action)?\s*(?:id|no\.?|#)|TxnId|RRN|Ref(?:erence)?\s*(?:no\.?|#))\s*[:=#]?\s*([A-Za-z0-9-]{4,})/i],
+  ['Session', /\bSession\s*(?:id|#)\s*[:=#]?\s*([A-Za-z0-9-]{3,})/i],
+];
+const START_RE = /start\s*session|begin\s*transaction|transaction\s*start|STARTUP\b/i;
+const END_RE   = /session\s*finish|end\s*transaction|transaction\s*(?:end|complete)/i;
+const ACTORS = [
+  ['POS',    /\bPOS\b|simphony|\bOPI\b/i],
+  ['Pinpad', /pin\s*pad|terminal|\bSCA\b|\bdevice\b/i],
+  ['Host',   /\bhost\b|gateway|authori[sz]ation|acquirer|\bcomm\b/i],
+  ['EPS',    /\bEPS\b|fipayeps/i],
+];
+const APPROVED_RE = /approv(?:ed|al)|response\s*code\s*[:=]?\s*(?:00|0)\b|\bsuccess/i;
+const DECLINE_RE  = /declin|denied|not approved|timeout|timed out|fail|error|cancel/i;
+const AMOUNT_RE   = /\b(?:total|amount|amt)\s*[:=]?\s*\$?\s*(\d+(?:\.\d{1,2})?)\b/i;
+const CARD_RE     = /\b(visa|master ?card|amex|american express|discover|debit|interac)\b/i;
+
+function buildAnalysis(){
+  const txMap = new Map(); let seq = 0, open = null;
+  const errors = [];
+  for (const f of state.files) {
+    open = null;
+    for (const e of f.entries) {
+      // errors
+      const kwErr = ERR_KW.test(e.text);
+      const sev = e.lv==='E' ? 'E' : (e.lv==='W' || WARN_KW.test(e.text)) && !kwErr ? 'W' : kwErr && e.lv!=='I' && e.lv!=='D' ? 'E' : kwErr && e.lv ? 'E' : '';
+      if (sev) errors.push({ e, f, sev, type: errType(e.text) });
+      // transactions
+      let key=null;
+      for (const [label, re] of ID_RES) { const m=e.text.match(re); if (m) { key = `${label} ${m[1]}`; break; } }
+      const isStart = START_RE.test(e.text), isEnd = END_RE.test(e.text);
+      if (!key) {
+        if (isStart && !open) key = `Session #${++seq}@${f.short}`;
+        else if (open && (isNaN(e.ms)||isNaN(open.last) || e.ms - open.last < 120000)) key = open.key;
+      }
+      if (key) {
+        let tx = txMap.get(key + '|' + f.id) ;
+        if (!tx) { tx = { key, file:f, steps:[], first:e.ms, last:e.ms, firstTs:e.ts, amount:'', card:'', status:'unknown', errors:0 }; txMap.set(key+'|'+f.id, tx); }
+        tx.steps.push(e);
+        if (!isNaN(e.ms)) { tx.last = e.ms; if (isNaN(tx.first)) tx.first = e.ms; }
+        tx.lastTs = e.ts || tx.lastTs;
+        open = tx;
+        if (isEnd) open = null;
+        if (!tx.amount) { const a=e.text.match(AMOUNT_RE); if (a) tx.amount=a[1]; }
+        if (!tx.card)   { const c=e.text.match(CARD_RE);   if (c) tx.card=c[1]; }
+      }
+    }
+  }
+  const txs=[...txMap.values()].filter(t=>t.steps.length>1 || /^Session #/.test(t.key)===false);
+  for (const t of txs) {
+    t.errors = t.steps.filter(s=>s.lv==='E' || (ERR_KW.test(s.text) && s.lv!=='I' && s.lv!=='D')).length;
+    const txt = t.steps.map(s=>s.text).join('\n');
+    if (t.steps.some(s=>DECLINE_RE.test(s.text) && s.lv!=='D' && !/no error|error\s*[:=]\s*(?:0|none|null)/i.test(s.text))) t.status='failed';
+    if (APPROVED_RE.test(txt) && t.status!=='failed') t.status='approved';
+    t.duration = (isNaN(t.first)||isNaN(t.last)) ? null : t.last - t.first;
+  }
+  txs.sort((a,b)=> (a.file.id-b.file.id) || (isNaN(a.first)||isNaN(b.first) ? a.steps[0].first-b.steps[0].first : a.first-b.first));
+  state.txs = txs; state.errors = errors;
+}
+function errType(t){
+  if (/tls|ssl|handshake|certificate/i.test(t)) return 'TLS / comm';
+  if (/time-?out|timed out/i.test(t)) return 'Timeout';
+  if (/declin|not approved|denied/i.test(t)) return 'Declined';
+  if (/exception|traceback|panic|segfault|ANR in/i.test(t)) return 'Exception';
+  if (/pin\s*pad|terminal/i.test(t)) return 'Pinpad';
+  if (/connection|socket|network|comm/i.test(t)) return 'Connection';
+  return 'Other';
+}
+
+/* ---------- rendering: sidebar ---------- */
+function fmtSize(n){ return n>1048576 ? (n/1048576).toFixed(1)+' MB' : n>1024 ? (n/1024).toFixed(0)+' KB' : n+' B'; }
+function renderFiles(){
+  $('fileCount').textContent = state.files.length ? `(${state.files.length})` : '';
+  $('files').innerHTML = state.files.length ? state.files.map((f,i)=>`
+    <div class="file ${i===state.sel?'sel':''}" data-i="${i}" title="${esc(f.path)}">
+      <span>📄</span><div class="name">${esc(f.short)}<div class="meta">${f.lines.length.toLocaleString()} lines · ${fmtSize(f.size)}</div></div>
+      <button class="x" data-rm="${i}" title="Remove">✕</button></div>`).join('')
+    : '<div class="empty-note">No files yet.</div>';
+}
+$('files').onclick = e => {
+  const rm = e.target.closest('[data-rm]');
+  if (rm) { state.files.splice(+rm.dataset.rm,1); state.sel=Math.min(state.sel,state.files.length-1); rebuild(); return; }
+  const el = e.target.closest('.file'); if (!el) return;
+  state.sel = +el.dataset.i; renderFiles(); loadRaw(); switchTab('raw');
+};
+
+/* ---------- tabs ---------- */
+function switchTab(t){
+  state.tab=t;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on', b.dataset.tab===t));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on', p.id==='pane-'+t));
+  if (t==='raw') requestAnimationFrame(renderRaw);
+}
+$('tabs').onclick = e => { const b=e.target.closest('.tab'); if (b) switchTab(b.dataset.tab); };
+
+function rebuild(){
+  buildAnalysis();
+  renderFiles();
+  $('bTx').textContent = state.txs.length;
+  $('bErr').textContent = state.errors.filter(x=>x.sev==='E').length;
+  $('bErr').classList.toggle('err', state.errors.length>0);
+  $('bRaw').textContent = state.files.length;
+  if (!state.txs.includes(state.txSel)) state.txSel = state.txs[0] || null;
+  renderTxList(); renderErrors(); fillRawFiles(); loadRaw();
+}
+
+/* ---------- transactions UI ---------- */
+function fmtDur(ms){ return ms==null ? '–' : ms<1000 ? ms+' ms' : ms<60000 ? (ms/1000).toFixed(1)+' s' : Math.floor(ms/60000)+'m '+Math.round(ms%60000/1000)+'s'; }
+function txMatches(t){
+  const st=$('txStatus').value, q=$('txSearch').value.trim().toLowerCase();
+  if (st && t.status!==st) return false;
+  return !q || t.key.toLowerCase().includes(q) || t.amount.includes(q) || t.steps.some(s=>s.text.toLowerCase().includes(q));
+}
+function renderTxList(){
+  const list = state.txs.filter(txMatches);
+  $('txCount').textContent = `${list.length} of ${state.txs.length}`;
+  if (!state.files.length) { $('txList').innerHTML=''; $('txDetail').innerHTML = welcome(); return; }
+  $('txList').innerHTML = list.length ? list.map(t=>`
+    <div class="tx ${t===state.txSel?'sel':''}" data-i="${state.txs.indexOf(t)}">
+      <div class="top"><span>${esc(t.key.replace(/@.*/,''))}</span><span class="pill ${t.status}">${t.status}</span></div>
+      <div class="sub"><span>${esc(t.firstTs||'')}</span><span>${t.amount?'$'+esc(t.amount)+' · ':''}${t.steps.length} steps · ${fmtDur(t.duration)}</span></div>
+    </div>`).join('') : '<div class="empty-note">No transactions match. Transactions are detected from invoice / receipt / session identifiers in your logs.</div>';
+  renderTxDetail();
+}
+function welcome(){ return `<div class="welcome"><div class="big">📂</div><h2>Drop your logs to get started</h2><p>Open a log file or archive on the left (or use <b>Open logs</b>). Transactions, errors and the raw files will appear here.</p></div>`; }
+$('txList').onclick = e => { const el=e.target.closest('.tx'); if(!el) return; state.txSel=state.txs[+el.dataset.i]; renderTxList(); };
+$('txSearch').oninput = renderTxList; $('txStatus').onchange = renderTxList;
+
+function actorOf(text){ for (const [n,re] of ACTORS) if (re.test(text)) return n; return ''; }
+function renderTxDetail(){
+  const t=state.txSel, box=$('txDetail');
+  if (!t) { box.innerHTML = state.files.length ? '<div class="welcome"><div class="big">🔍</div><h2>No transaction selected</h2></div>' : welcome(); return; }
+  const q=$('txSearch').value.trim();
+  const steps=t.steps.map(s=>{
+    const actor=actorOf(s.text), isErr=s.lv==='E' || (ERR_KW.test(s.text) && s.lv!=='I' && s.lv!=='D'), isWarn=s.lv==='W';
+    const receipt = /receipt|\n.{0,40}\n.{0,40}\n/i.test(s.text) && s.last-s.first>=3;
+    return `<div class="step ${isErr?'err':isWarn?'warn':''} ${receipt?'receipt':''}">
+      <div class="h"><span>${esc(s.ts||'')}</span>${actor?`<span class="actor">${actor}</span>`:''}${s.lv?`<span>${s.lv==='E'?'ERROR':s.lv==='W'?'WARN':s.lv==='I'?'INFO':'DEBUG'}</span>`:''}<span>line ${s.first}${s.last>s.first?'–'+s.last:''}</span>
+      <button class="btn sm go" data-go="${s.file}:${s.first}">View raw ↗</button></div>
+      <div class="msg">${hl(esc(stripTs(s.text)), q)}</div></div>`;
+  }).join('');
+  box.innerHTML = `
+    <div class="txhead"><h2>${esc(t.key.replace(/@.*/,''))}</h2><span class="pill ${t.status}">${t.status}</span>
+      <span class="spacer"></span><button class="btn sm" id="txCopy">Copy transaction</button></div>
+    <div class="stats">
+      <div class="stat"><div class="l">Start</div><div class="v">${esc(t.firstTs||'–')}</div></div>
+      <div class="stat"><div class="l">Duration</div><div class="v">${fmtDur(t.duration)}</div></div>
+      <div class="stat"><div class="l">Amount</div><div class="v">${t.amount?'$'+esc(t.amount):'–'}</div></div>
+      <div class="stat"><div class="l">Card</div><div class="v">${esc(t.card||'–')}</div></div>
+      <div class="stat"><div class="l">Steps / issues</div><div class="v">${t.steps.length} / ${t.errors}</div></div>
+      <div class="stat"><div class="l">Source</div><div class="v" title="${esc(t.file.path)}">${esc(t.file.short)}</div></div>
+    </div>
+    <div class="timeline">${steps}</div>`;
+  $('txCopy').onclick = () => copyText(t.steps.map(s=>s.text).join('\n'));
+}
+function stripTs(t){ const p=parseTs(t); return p ? t.slice(p.len).replace(/^[\s\]|:-]+/,'') : t; }
+$('txDetail').onclick = e => { const b=e.target.closest('[data-go]'); if(!b) return; const [id,ln]=b.dataset.go.split(':'); gotoRaw(+id,+ln); };
+
+/* ---------- errors UI ---------- */
+function renderErrors(){
+  const types=[...new Set(state.errors.map(x=>x.type))].sort();
+  $('errChips').innerHTML = ['all',...types].map(t=>`<button class="chip ${state.errType===t?'on':''}" data-t="${esc(t)}">${t==='all'?'All':esc(t)}</button>`).join(' ');
+  const q=$('errSearch').value.trim().toLowerCase();
+  const list=state.errors.filter(x=>(state.errType==='all'||x.type===state.errType) && (!q||x.e.text.toLowerCase().includes(q)));
+  $('errCount').textContent=`${list.length} shown`;
+  const MAX=500;
+  $('errList').innerHTML = list.length ? list.slice(0,MAX).map(x=>`
+    <div class="errrow ${x.sev==='W'?'warn':''}"><div class="body">
+      <div class="h"><b>${esc(x.type)}</b><span>${esc(x.e.ts||'')}</span><span>${esc(x.f.short)}:${x.e.first}</span></div>
+      <div class="msg">${hl(esc(stripTs(x.e.text)), q)}</div></div>
+      <button class="btn sm" data-go="${x.f.id}:${x.e.first}">View raw ↗</button></div>`).join('') + (list.length>MAX?`<div class="empty-note">Showing first ${MAX}. Narrow the filter to see more.</div>`:'')
+    : `<div class="empty-note">${state.files.length?'🎉 No errors found.':'Open a log to see errors.'}</div>`;
+}
+$('errChips').onclick = e => { const c=e.target.closest('.chip'); if(c){ state.errType=c.dataset.t; renderErrors(); } };
+$('errSearch').oninput = renderErrors;
+$('errList').onclick = e => { const b=e.target.closest('[data-go]'); if(!b) return; const [id,ln]=b.dataset.go.split(':'); gotoRaw(+id,+ln); };
+
+/* ---------- raw viewer (virtualised) ---------- */
+const RH=20;
+const raw = { file:null, rows:[], hits:[], hit:-1, table:true, wrap:false, q:'', flash:0 };
+function hl(html, q){
+  if (!q) return html;
+  const re=new RegExp(esc(q).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'ig');
+  return html.replace(re, m=>`<mark>${m}</mark>`);
+}
+function fillRawFiles(){
+  $('rawFile').innerHTML = state.files.map((f,i)=>`<option value="${i}">${esc(f.short)}</option>`).join('') || '<option>No files</option>';
+  if (state.sel>=0) $('rawFile').value = state.sel;
+}
+function loadRaw(){
+  raw.file = state.files[state.sel] || null;
+  if (state.sel>=0) $('rawFile').value=state.sel;
+  applyRawFilter();
+}
+function applyRawFilter(){
+  const f=raw.file, lv=$('rawLevel').value;
+  raw.q=$('rawSearch').value;
+  raw.rows = !f ? [] : lv ? f.lines.filter(l=>lv==='E' ? l.lv==='E' : (l.lv==='E'||l.lv==='W')) : f.lines;
+  const q=raw.q.toLowerCase();
+  raw.hits = q ? raw.rows.reduce((a,l,i)=>{ if(l.s.toLowerCase().includes(q)) a.push(i); return a; },[]) : [];
+  raw.hit = raw.hits.length ? 0 : -1;
+  $('hitCount').textContent = q ? (raw.hits.length ? `1 / ${raw.hits.length}` : 'no matches') : '';
+  $('rawInfo').textContent = f ? `${f.path} — ${raw.rows.length.toLocaleString()}${raw.rows.length!==f.lines.length?' of '+f.lines.length.toLocaleString():''} lines` : '';
+  $('rawInner').style.height = raw.rows.length*RH + 'px';
+  $('rawScroll').scrollTop = 0;
+  if (raw.hit>=0) scrollToRow(raw.hits[0]); else renderRaw();
+}
+function scrollToRow(i){
+  const sc=$('rawScroll'); sc.scrollTop = Math.max(0, i*RH - sc.clientHeight/2); renderRaw();
+}
+function renderRaw(){
+  const sc=$('rawScroll'), inner=$('rawInner');
+  if (!sc.clientHeight) return;
+  const start=Math.max(0, Math.floor(sc.scrollTop/RH)-10), end=Math.min(raw.rows.length, Math.ceil((sc.scrollTop+sc.clientHeight)/RH)+10);
+  const q=raw.q, curHit = raw.hit>=0 ? raw.hits[raw.hit] : -1;
+  let html='', maxLen=0;
+  if (!state.files.length) { inner.innerHTML = `<div class="welcome" style="position:static">${welcome()}</div>`; inner.style.height='auto'; return; }
+  for (let i=start;i<end;i++) {
+    const l=raw.rows[i];
+    const msg = raw.table && l.ts && l.s.startsWith(l.ts) ? l.s.slice(l.ts.length) : l.s;
+    html += `<div class="rl ${l.lv==='E'||l.lv==='W'?l.lv:''} ${i===curHit?'hit':''}" style="top:${i*RH}px">
+      <span class="n">${l.n}</span>${raw.table?`<span class="t">${esc(l.ts)}</span><span class="lv ${l.lv}">${{E:'ERROR',W:'WARN',I:'INFO',D:'DEBUG'}[l.lv]||''}</span>`:''}<span class="m">${hl(esc(msg.replace(/\t/g,'    ')), q)}</span></div>`;
+  }
+  inner.innerHTML = html;
+  // widest visible line drives horizontal scroll
+  for (let i=start;i<end;i++) maxLen=Math.max(maxLen, raw.rows[i].s.length);
+  inner.style.minWidth = (64 + (raw.table?222:0) + maxLen*7.6 + 40) + 'px';
+}
+$('rawScroll').addEventListener('scroll', () => requestAnimationFrame(renderRaw));
+window.addEventListener('resize', renderRaw);
+$('rawFile').onchange = e => { state.sel=+e.target.value; renderFiles(); loadRaw(); };
+let rawTimer; $('rawSearch').oninput = () => { clearTimeout(rawTimer); rawTimer=setTimeout(applyRawFilter,150); };
+$('rawLevel').onchange = applyRawFilter;
+function stepHit(d){ if(!raw.hits.length) return; raw.hit=(raw.hit+d+raw.hits.length)%raw.hits.length; $('hitCount').textContent=`${raw.hit+1} / ${raw.hits.length}`; scrollToRow(raw.hits[raw.hit]); }
+$('nextHit').onclick=()=>stepHit(1); $('prevHit').onclick=()=>stepHit(-1);
+$('rawSearch').onkeydown = e => { if (e.key==='Enter') { clearTimeout(rawTimer); if(raw.q!==e.target.value) applyRawFilter(); else stepHit(e.shiftKey?-1:1); } };
+$('viewMode').onclick = () => { raw.table=!raw.table; $('viewMode').textContent = raw.table?'Table view':'Plain text'; $('viewMode').classList.toggle('active',!raw.table); renderRaw(); };
+$('wrapBtn').style.display='none';
+$('copyBtn').onclick = () => raw.file && copyText(raw.rows.map(l=>l.s).join('\n'));
+$('dlBtn').onclick = () => { if(!raw.file) return; const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([raw.file.text],{type:'text/plain'})); a.download=raw.file.short; a.click(); URL.revokeObjectURL(a.href); };
+function gotoRaw(fileId, line){
+  const i=state.files.findIndex(f=>f.id===fileId); if(i<0) return;
+  state.sel=i; renderFiles(); $('rawSearch').value=''; $('rawLevel').value=''; loadRaw(); switchTab('raw');
+  requestAnimationFrame(()=>{ const idx=raw.rows.findIndex(l=>l.n===line); if(idx>=0){ raw.hits=[idx]; raw.hit=0; $('hitCount').textContent='line '+line; scrollToRow(idx); } });
+}
+function copyText(t){ (navigator.clipboard?.writeText(t) || Promise.reject()).then(()=>toast('Copied to clipboard'), ()=>{ const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); toast('Copied to clipboard'); }); }
+
+/* ---------- shortcuts ---------- */
+document.addEventListener('keydown', e => {
+  const typing = /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
+  if (e.key==='Escape' && typing) { document.activeElement.value=''; document.activeElement.dispatchEvent(new Event('input')); document.activeElement.blur(); return; }
+  if (typing || e.ctrlKey || e.metaKey) return;
+  if (e.key==='/') { e.preventDefault(); const id = {tx:'txSearch',err:'errSearch',raw:'rawSearch'}[state.tab]; $(id).focus(); }
+  else if (e.key==='1') switchTab('tx'); else if (e.key==='2') switchTab('err'); else if (e.key==='3') switchTab('raw');
+});
+
+/* initial */
+renderFiles(); renderTxList(); renderErrors(); fillRawFiles();
+window.__lr = { state, addFile, rebuild };   // handy for debugging
+})();
+</script>
+</body>
+</html>
