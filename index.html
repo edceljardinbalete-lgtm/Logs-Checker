@@ -390,6 +390,8 @@ const ID_RES = [
   ['Txn',     /\b(?:Trans(?:action)?\s*(?:id|no\.?|#)|TxnId|RRN|Ref(?:erence)?\s*(?:no\.?|#))\s*[:=#]?\s*([A-Za-z0-9-]{4,})/i],
   ['Session', /\bSession\s*(?:id|#)\s*[:=#]?\s*([A-Za-z0-9-]{3,})/i],
 ];
+const SCA_START_RE = /start\s*session/i, SCA_END_RE = /session\s*finish/i, SCA_GAP_MS = 10*60*1000;
+const isScaFile = f => /scaapp\d*\.log$/i.test(f.short);
 const START_RE = /start\s*session|begin\s*transaction|transaction\s*start|STARTUP\b/i;
 const END_RE   = /session\s*finish|end\s*transaction|transaction\s*(?:end|complete)/i;
 const ACTORS = [
@@ -408,12 +410,30 @@ function buildAnalysis(){
   const errors = [];
   for (const f of state.files) {
     open = null;
+    const sca = isScaFile(f);
     for (const e of f.entries) {
       // errors
       const kwErr = ERR_KW.test(e.text);
       const sev = e.lv==='E' ? 'E' : (e.lv==='W' || WARN_KW.test(e.text)) && !kwErr ? 'W' : kwErr && e.lv!=='I' && e.lv!=='D' ? 'E' : kwErr && e.lv ? 'E' : '';
       if (sev) errors.push({ e, f, sev, type: errType(e.text) });
       // transactions
+      if (sca) {   // SCA logs: one transaction per Start Session ... Session Finish, nothing else
+        const st = SCA_START_RE.test(e.text), en = SCA_END_RE.test(e.text);
+        if (st) {
+          if (open) open.incomplete = true;   // previous session never saw a finish line
+          open = { key:`Session #${++seq}@${f.short}`, file:f, steps:[], first:e.ms, last:e.ms, firstTs:e.ts, amount:'', card:'', status:'unknown', errors:0 };
+          txMap.set(open.key+'|'+f.id, open);
+        } else if (open && !isNaN(e.ms) && !isNaN(open.last) && e.ms - open.last > SCA_GAP_MS) { open.incomplete = true; open = null; }
+        if (open) {
+          open.steps.push(e);
+          if (!isNaN(e.ms)) { open.last = e.ms; if (isNaN(open.first)) open.first = e.ms; }
+          if (!open.amount) { const a=e.text.match(AMOUNT_RE); if (a) open.amount=a[1]; }
+          if (!open.card)   { const c=e.text.match(CARD_RE);   if (c) open.card=c[1]; }
+          if (!open.ref) for (const [label, re] of ID_RES) { const m=e.text.match(re); if (m && label!=='Session') { open.ref=`${label} ${m[1]}`; break; } }
+          if (en) open = null;
+        }
+        continue;
+      }
       let key=null;
       for (const [label, re] of ID_RES) { const m=e.text.match(re); if (m) { key = `${label} ${m[1]}`; break; } }
       const isStart = START_RE.test(e.text), isEnd = END_RE.test(e.text);
@@ -435,6 +455,7 @@ function buildAnalysis(){
     }
   }
   const txs=[...txMap.values()].filter(t=>t.steps.length>1 || /^Session #/.test(t.key)===false);
+  for (const t of txs) t.title = t.key.replace(/@.*/,'') + (t.ref ? ' · '+t.ref : '');
   for (const t of txs) {
     t.errors = t.steps.filter(s=>s.lv==='E' || (ERR_KW.test(s.text) && s.lv!=='I' && s.lv!=='D')).length;
     const txt = t.steps.map(s=>s.text).join('\n');
@@ -570,7 +591,7 @@ function renderTxList(){
   if (!state.files.length) { $('txList').innerHTML=''; $('txDetail').innerHTML = welcome(); return; }
   $('txList').innerHTML = list.length ? list.map(t=>`
     <div class="tx ${t===state.txSel?'sel':''}" data-i="${state.txs.indexOf(t)}">
-      <div class="top"><span>${esc(t.key.replace(/@.*/,''))}</span><span class="pill ${t.status}">${t.status}</span></div>
+      <div class="top"><span>${esc(t.title)}</span><span class="pill ${t.status}">${t.status}</span></div>
       <div class="sub"><span>${esc(t.firstTs||'')}</span><span>${t.amount?'$'+esc(t.amount)+' · ':''}${t.steps.length} steps · ${fmtDur(t.duration)}</span></div>
     </div>`).join('') : '<div class="empty-note">No transactions match. Transactions are detected from invoice / receipt / session identifiers in your logs.</div>';
   renderTxDetail();
@@ -593,7 +614,7 @@ function renderTxDetail(){
       <div class="msg">${hl(esc(stripTs(s.text)), q)}</div></div>`;
   }).join('');
   box.innerHTML = `
-    <div class="txhead"><h2>${esc(t.key.replace(/@.*/,''))}</h2><span class="pill ${t.status}">${t.status}</span>
+    <div class="txhead"><h2>${esc(t.title)}</h2>${t.incomplete?'<span class="pill unknown" title="No Session Finish line was found before the next session or a long gap">no finish</span>':''}<span class="pill ${t.status}">${t.status}</span>
       <span class="spacer"></span><button class="btn sm" id="txCopy">Copy transaction</button></div>
     <div class="stats">
       <div class="stat"><div class="l">Start</div><div class="v">${esc(t.firstTs||'–')}</div></div>
