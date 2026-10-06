@@ -390,9 +390,13 @@ const ID_RES = [
   ['Txn',     /\b(?:Trans(?:action)?\s*(?:id|no\.?|#)|TxnId|RRN|Ref(?:erence)?\s*(?:no\.?|#))\s*[:=#]?\s*([A-Za-z0-9-]{4,})/i],
   ['Session', /\bSession\s*(?:id|#)\s*[:=#]?\s*([A-Za-z0-9-]{3,})/i],
 ];
-const SCA_START_RE = /start\s*session/i, SCA_END_RE = /session\s*finish/i, SCA_GAP_MS = 10*60*1000;
-const isScaFile = f => /scaapp\d*\.log$/i.test(f.short);
-const START_RE = /start\s*session|begin\s*transaction|transaction\s*start|STARTUP\b/i;
+const GAP_MS = 15*60*1000;   // a dedicated-format transaction is closed if nothing is logged for this long
+const tag = (t, n) => { const m = t.match(new RegExp('<'+n+'>([^<]*)</'+n+'>')); return m ? m[1].trim() : ''; };
+// Dedicated parsers exist for Verifone SCA logs (scaapp*.log) and FIPAYEPS/EPS logs; everything else uses the generic grouping.
+const logMode = f => f.mode || (f.mode = /scaapp\d*\.log$/i.test(f.short) || /\bSCI_REQUEST\b/.test(f.text) ? 'sca' : /Req from POS \(XML/.test(f.text) ? 'eps' : 'generic');
+const newTx = (key, f, e) => ({ key, file:f, steps:[], first:e.ms, last:e.ms, firstTs:e.ts, amount:'', card:'', status:'unknown', errors:0, final:true, ref:'', kind:'', result:'' });
+function addStep(tx, e){ tx.steps.push(e); if (!isNaN(e.ms)) { tx.last = e.ms; if (isNaN(tx.first)) tx.first = e.ms; } }
+const START_RE = /start\s*session|begin\s*transaction|transaction\s*start/i;
 const END_RE   = /session\s*finish|end\s*transaction|transaction\s*(?:end|complete)/i;
 const ACTORS = [
   ['POS',    /\bPOS\b|simphony|\bOPI\b/i],
@@ -408,29 +412,74 @@ const CARD_RE     = /\b(visa|master ?card|amex|american express|discover|debit|i
 function buildAnalysis(){
   const txMap = new Map(); let seq = 0, open = null;
   const errors = [];
-  for (const f of state.files) {
-    open = null;
-    const sca = isScaFile(f);
+  // rotated logs (scaapp0..5) are walked oldest-first so a transaction that runs across two files stays in one piece
+  const ordered = [...state.files].sort((a,b)=> ((a.entries.length&&!isNaN(a.entries[0].ms)?a.entries[0].ms:Infinity) - (b.entries.length&&!isNaN(b.entries[0].ms)?b.entries[0].ms:Infinity)) || a.id-b.id);
+  let prevMode = '', lastInv = ''; const recent = [];
+  for (const f of ordered) {
+    const mode = logMode(f);
+    if (mode !== prevMode || mode === 'generic') { if (open && open.final) open.incomplete = true; open = null; lastInv = ''; recent.length = 0; }
+    prevMode = mode;
     for (const e of f.entries) {
       // errors
       const kwErr = ERR_KW.test(e.text);
       const sev = e.lv==='E' ? 'E' : (e.lv==='W' || WARN_KW.test(e.text)) && !kwErr ? 'W' : kwErr && e.lv!=='I' && e.lv!=='D' ? 'E' : kwErr && e.lv ? 'E' : '';
       if (sev) errors.push({ e, f, sev, type: errType(e.text) });
       // transactions
-      if (sca) {   // SCA logs: one transaction per Start Session ... Session Finish, nothing else
-        const st = SCA_START_RE.test(e.text), en = SCA_END_RE.test(e.text);
-        if (st) {
-          if (open) open.incomplete = true;   // previous session never saw a finish line
-          open = { key:`Session #${++seq}@${f.short}`, file:f, steps:[], first:e.ms, last:e.ms, firstTs:e.ts, amount:'', card:'', status:'unknown', errors:0 };
-          txMap.set(open.key+'|'+f.id, open);
-        } else if (open && !isNaN(e.ms) && !isNaN(open.last) && e.ms - open.last > SCA_GAP_MS) { open.incomplete = true; open = null; }
+      if (mode === 'sca') {   // one transaction per PAYMENT, from the POS request (or the host request when run standalone) to its result
+        recent.push(e); if (recent.length > 80) recent.shift();
+        const isReq = /\bSCI_REQUEST\b/.test(e.text), isResp = /\bSCI_RESPONSE\b/.test(e.text);
+        const isHostReq = /\bHOST_REQUEST\b/.test(e.text), isHostResp = /\bHOST_RESPONSE\b/.test(e.text);
+        const ft = (isReq || isHostReq) ? tag(e.text,'FUNCTION_TYPE') : '', cmd = (isReq || isHostReq) ? tag(e.text,'COMMAND') : '';
+        if (open && !isNaN(e.ms) && !isNaN(open.last) && e.ms - open.last > GAP_MS) { open.incomplete = true; open = null; }
+        if (isReq && ft === 'SESSION') {
+          if (cmd === 'START') lastInv = tag(e.text,'INVOICE') || lastInv;
+          if (open) { open.incomplete = true; open = null; }
+        }
+        if (isReq && ft === 'PAYMENT') {
+          if (open) open.incomplete = true;
+          open = newTx(`Txn #${++seq}@${f.short}`, f, e); txMap.set(open.key+'|'+f.id, open);
+          open.kind = cmd; open.ref = lastInv ? `Invoice ${lastInv}` : '';
+        } else if (!open && isHostReq && ft === 'PAYMENT') {   // standalone (no POS request): pull in the card-read lines that led up to it
+          let i = recent.length - 1; while (i > 0 && !/Enabling Card Readers/.test(recent[i-1].text) && recent.length - i < 60) i--;
+          const lead = /Enabling Card Readers/.test((recent[i-1]||{text:''}).text) ? recent.slice(i-1) : [e];
+          open = newTx(`Txn #${++seq}@${f.short}`, f, lead[0]); txMap.set(open.key+'|'+f.id, open);
+          open.kind = cmd; open.standalone = true;
+          for (const x of lead.slice(0, -1)) addStep(open, x);
+        }
         if (open) {
-          open.steps.push(e);
-          if (!isNaN(e.ms)) { open.last = e.ms; if (isNaN(open.first)) open.first = e.ms; }
-          if (!open.amount) { const a=e.text.match(AMOUNT_RE); if (a) open.amount=a[1]; }
-          if (!open.card)   { const c=e.text.match(CARD_RE);   if (c) open.card=c[1]; }
-          if (!open.ref) for (const [label, re] of ID_RES) { const m=e.text.match(re); if (m && label!=='Session') { open.ref=`${label} ${m[1]}`; break; } }
-          if (en) open = null;
+          if (open.steps[open.steps.length-1] !== e) addStep(open, e);
+          const amt = tag(e.text,'TRANS_AMOUNT'); if (!open.amount && amt) open.amount = amt;
+          const media = tag(e.text,'PAYMENT_MEDIA'); if (!open.card && media) open.card = media;
+          const inv = tag(e.text,'INVOICE'); if (inv && !open.ref) open.ref = `Invoice ${inv}`;
+          // the final response carries the same COMMAND as the payment (secondary-port STATUS / CANCEL replies have their own)
+          const done = (isResp && tag(e.text,'COMMAND').toUpperCase() === open.kind.toUpperCase()) || (open.standalone && isHostResp && tag(e.text,'RESULT'));
+          if (done) {
+            const term = tag(e.text,'TERMINATION_STATUS'), res = tag(e.text,'RESULT');
+            open.result = [res, tag(e.text,'RESPONSE_TEXT')].filter(Boolean).join(' – ');
+            open.status = term === 'SUCCESS' && /^(CAPTURED|APPROVED|VOIDED)/i.test(res) ? 'approved' : 'failed';
+            open = null;
+          }
+        }
+        continue;
+      }
+      if (mode === 'eps') {   // one transaction per "Req from POS (XML" up to "Eps Ready for Next Command"
+        if (open && !isNaN(e.ms) && !isNaN(open.last) && e.ms - open.last > GAP_MS) { open.incomplete = true; open = null; }
+        if (/Req from POS \(XML/.test(e.text)) {
+          if (open) open.incomplete = true;
+          open = newTx(`Txn #${++seq}@${f.short}`, f, e); txMap.set(open.key+'|'+f.id, open);
+        }
+        if (open) {
+          addStep(open, e);
+          const eps = e.text.match(/Eps#:?\s*(\d+)/); if (eps && !open.ref) open.ref = `Eps# ${eps[1]}`;
+          const tt = tag(e.text,'TransType'); if (tt && !open.kind) open.kind = tt;
+          const amt = tag(e.text,'TransAmount'); if (amt && !open.amount) open.amount = /^\d+$/.test(amt) ? (amt/100).toFixed(2) : amt;
+          if (/Response to POS \(XML/.test(e.text)) {
+            const code = tag(e.text,'RespCode'), txt = tag(e.text,'RespText');
+            open.result = [code, txt].filter(Boolean).join(' – ');
+            open.status = code === '00' || code === '10' ? 'approved' : 'failed';
+          }
+          if (!open.card) { const c = e.text.match(CARD_RE); if (c) open.card = c[1]; }
+          if (/Eps Ready for Next Command/.test(e.text)) { if (!open.result) open.result = 'No response sent to POS'; open = null; }
         }
         continue;
       }
@@ -454,16 +503,17 @@ function buildAnalysis(){
       }
     }
   }
+  if (open && open.final) open.incomplete = true;   // still open when the last file ends (log cut off)
   const txs=[...txMap.values()].filter(t=>t.steps.length>1 || /^Session #/.test(t.key)===false);
   for (const t of txs) t.title = t.key.replace(/@.*/,'') + (t.ref ? ' · '+t.ref : '');
   for (const t of txs) {
     t.errors = t.steps.filter(s=>s.lv==='E' || (ERR_KW.test(s.text) && s.lv!=='I' && s.lv!=='D')).length;
     const txt = t.steps.map(s=>s.text).join('\n');
-    if (t.steps.some(s=>DECLINE_RE.test(s.text) && s.lv!=='D' && !/no error|error\s*[:=]\s*(?:0|none|null)/i.test(s.text))) t.status='failed';
-    if (APPROVED_RE.test(txt) && t.status!=='failed') t.status='approved';
+    if (!t.final && t.steps.some(s=>DECLINE_RE.test(s.text) && s.lv!=='D' && !/no error|error\s*[:=]\s*(?:0|none|null)/i.test(s.text))) t.status='failed';
+    if (!t.final && APPROVED_RE.test(txt) && t.status!=='failed') t.status='approved';
     t.duration = (isNaN(t.first)||isNaN(t.last)) ? null : t.last - t.first;
   }
-  txs.sort((a,b)=> (a.file.id-b.file.id) || (isNaN(a.first)||isNaN(b.first) ? a.steps[0].first-b.steps[0].first : a.first-b.first));
+  txs.sort((a,b)=> ((isNaN(a.first)?Infinity:a.first) - (isNaN(b.first)?Infinity:b.first)) || (a.file.id-b.file.id) || (a.steps[0].first-b.steps[0].first));
   state.txs = txs; state.errors = errors;
 }
 function errType(t){
@@ -587,6 +637,7 @@ function txMatches(t){
 }
 function renderTxList(){
   const list = state.txs.filter(txMatches);
+  if (list.length && !list.includes(state.txSel)) state.txSel = list[0];
   $('txCount').textContent = `${list.length} of ${state.txs.length}`;
   if (!state.files.length) { $('txList').innerHTML=''; $('txDetail').innerHTML = welcome(); return; }
   $('txList').innerHTML = list.length ? list.map(t=>`
@@ -621,6 +672,8 @@ function renderTxDetail(){
       <div class="stat"><div class="l">Duration</div><div class="v">${fmtDur(t.duration)}</div></div>
       <div class="stat"><div class="l">Amount</div><div class="v">${t.amount?'$'+esc(t.amount):'–'}</div></div>
       <div class="stat"><div class="l">Card</div><div class="v">${esc(t.card||'–')}</div></div>
+      ${t.kind?`<div class="stat"><div class="l">Type</div><div class="v">${esc(t.kind)}</div></div>`:''}
+      ${t.result?`<div class="stat"><div class="l">Result</div><div class="v" title="${esc(t.result)}">${esc(t.result)}</div></div>`:''}
       <div class="stat"><div class="l">Steps / issues</div><div class="v">${t.steps.length} / ${t.errors}</div></div>
       <div class="stat"><div class="l">Source</div><div class="v" title="${esc(t.file.path)}">${esc(t.file.short)}</div></div>
     </div>
