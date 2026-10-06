@@ -630,7 +630,7 @@ $('errList').onclick = e => { const b=e.target.closest('[data-go]'); if(!b) retu
 
 /* ---------- raw viewer (virtualised) ---------- */
 const RH=20;
-const raw = { file:null, rows:[], hits:[], hit:-1, table:true, wrap:true, q:'', off:[0], cap:80 };
+const raw = { file:null, rows:[], hits:[], hit:-1, table:true, compact:false, wrap:true, q:'', off:[0], cap:80 };
 function hl(html, q){
   if (!q) return html;
   const re=new RegExp(esc(q).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'ig');
@@ -645,7 +645,9 @@ function loadRaw(){
   if (state.sel>=0) $('rawFile').value=state.sel;
   applyRawFilter();
 }
-const msgOf = l => (raw.table && l.tl ? l.s.slice(l.tl) : l.s).replace(/\t/g,'    ');
+// table columns (timestamp / level) are dropped automatically when the window is too narrow to leave room for the message
+const tbl = () => raw.table && !raw.compact;
+const msgOf = l => (tbl() && l.tl ? l.s.slice(l.tl) : l.s).replace(/\t/g,'    ');
 let charW = 0;
 function measureChar(){
   const c = document.createElement('canvas').getContext('2d');
@@ -655,10 +657,11 @@ function measureChar(){
 // row offsets: fixed height when not wrapping, otherwise rows grow with the number of wrapped lines
 function layoutRaw(){
   const sc=$('rawScroll'), n=raw.rows.length, off=new Array(n+1);
-  off[0]=0;
+  off[0]=0; raw.compact=false;
   if (raw.wrap && sc.clientWidth) {
     if (!charW) measureChar();
-    const avail = sc.clientWidth - 60 - (raw.table ? 32*charW + 24 : 0) - 24;
+    raw.compact = raw.table && sc.clientWidth - 60 - (32*charW + 24) - 24 < 40*charW;
+    const avail = sc.clientWidth - 60 - (tbl() ? 32*charW + 24 : 0) - 24;
     raw.cap = Math.max(10, Math.floor(avail / charW));
     for (let i=0;i<n;i++) off[i+1] = off[i] + Math.max(1, Math.ceil(msgOf(raw.rows[i]).length / raw.cap)) * RH;
   } else for (let i=0;i<n;i++) off[i+1] = (i+1)*RH;
@@ -700,11 +703,11 @@ function renderRaw(){
     const l=raw.rows[i], msg=msgOf(l);
     maxLen=Math.max(maxLen, msg.length);
     html += `<div class="rl ${l.lv==='E'||l.lv==='W'?l.lv:''} ${i===curHit?'hit':''}" style="top:${raw.off[i]}px;height:${raw.off[i+1]-raw.off[i]}px">
-      <span class="n">${l.n}</span>${raw.table?`<span class="t">${esc(l.ts)}</span><span class="lv ${l.lv}">${{E:'ERROR',W:'WARN',I:'INFO',D:'DEBUG'}[l.lv]||''}</span>`:''}<span class="m">${hl(esc(msg), q)}</span></div>`;
+      <span class="n">${l.n}</span>${tbl()?`<span class="t">${esc(l.ts)}</span><span class="lv ${l.lv}">${{E:'ERROR',W:'WARN',I:'INFO',D:'DEBUG'}[l.lv]||''}</span>`:''}<span class="m">${hl(esc(msg), q)}</span></div>`;
   }
   inner.innerHTML = html;
   // without wrapping, the widest visible line drives the horizontal scroll
-  inner.style.minWidth = raw.wrap ? '' : (64 + (raw.table ? 32*(charW||7.8) + 24 : 0) + maxLen*(charW||7.8) + 40) + 'px';
+  inner.style.minWidth = raw.wrap ? '' : (64 + (tbl() ? 32*(charW||7.8) + 24 : 0) + maxLen*(charW||7.8) + 40) + 'px';
 }
 $('rawScroll').addEventListener('scroll', () => requestAnimationFrame(renderRaw));
 window.addEventListener('resize', relayout);
