@@ -130,9 +130,11 @@ section.content{flex:1;display:flex;flex-direction:column;min-width:0;min-height
 .rl{position:absolute;left:0;right:0;height:20px;line-height:20px;white-space:pre;display:flex}
 .rl:hover{background:var(--curline)}
 .rl .n{flex:none;width:60px;text-align:right;padding-right:8px;color:var(--gutter-text);user-select:none;background:var(--gutter);border-right:1px solid var(--border);position:sticky;left:0}
-.rl .t{flex:none;width:170px;padding:0 8px;color:var(--ts)}
-.rl .lv{flex:none;width:52px;font-weight:700;text-align:center}
+.rl .t{flex:none;width:calc(25ch + 16px);padding:0 8px;color:var(--ts);overflow:hidden}
+.rl .lv{flex:none;width:calc(7ch + 8px);font-weight:700;text-align:center;overflow:hidden}
 .rl .m{padding:0 10px;flex:none}
+.rawinner.wrap .rl .m{flex:1;min-width:0;white-space:pre-wrap;word-break:break-all}
+
 .rl.E{background:var(--err-soft)} .rl.W{background:var(--warn-soft)}
 .rl.hit{background:var(--curline);outline:1px solid var(--accent);outline-offset:-1px}
 .lv.E{color:var(--err)} .lv.W{color:var(--warn)} .lv.I{color:var(--ok)} .lv.D{color:var(--muted)}
@@ -214,7 +216,7 @@ kbd{background:var(--panel2);border:1px solid var(--border);border-bottom-width:
           <span class="count" id="hitCount"></span>
           <select id="rawLevel"><option value="">All levels</option><option value="E">Errors</option><option value="W">Warnings+</option></select>
           <button class="btn sm" id="viewMode" title="Toggle table / plain text">Table view</button>
-          <button class="btn sm" id="wrapBtn">Wrap off</button>
+          <button class="btn sm" id="wrapBtn" title="Wrap long lines so nothing runs off screen">Wrap: on</button>
           <span class="spacer"></span>
           <button class="btn sm" id="copyBtn">Copy</button>
           <button class="btn sm" id="dlBtn">Download</button>
@@ -327,6 +329,7 @@ async function untar(base, b, depth){
 
 /* ---------- parsing ---------- */
 const TS_RES = [
+  /^(?:[A-Za-z]{3,8}\s+)?(\d{2}\/\d{2}\/\d{4}\s\d{2}:\d{2}:\d{2}[:.,]\d{1,3})/,                              // [LEVEL] 08/09/2026 10:50:23:365
   /^\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?)(?:Z|[+-]\d{2}:?\d{2})?\]?/,            // 2026-09-16 12:00:01.123
   /^(\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{3})/,                                                             // logcat
   /^([A-Z][a-z]{2}\s+\d{1,2}\s\d{2}:\d{2}:\d{2})/,                                                        // syslog
@@ -353,6 +356,9 @@ function parseTs(line){
 }
 function tsToMs(ts){
   if (!ts) return NaN;
+  const dm = ts.match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}:\d{2}:\d{2})[:.,](\d{1,3})/);
+  if (dm) { const a=+dm[1], b=+dm[2], mm=a>12?b:a, dd=a>12?a:b;   // month/day unless the first part can't be a month
+    return new Date(`${dm[3]}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}T${dm[4]}.${dm[5].padEnd(3,'0')}`).getTime(); }
   const t = ts.replace(',', '.').replace('T',' ').replace(/\//g,'-');
   let d = new Date(/^\d{4}/.test(t) ? t.replace(' ','T') : /^\d{2}:/.test(t) ? '1970-01-01T'+t : NaN);
   if (!isNaN(d)) return d.getTime();
@@ -364,7 +370,7 @@ function tsToMs(ts){
 function addFile(name, text){
   const raw = text.replace(/\r\n?/g,'\n').split('\n');
   if (raw.length && raw[raw.length-1]==='') raw.pop();
-  const lines = raw.map((s,i) => { const t=parseTs(s); return { n:i+1, s, ts:t?t.ts:'', lv:classify(s), start:!!t }; });
+  const lines = raw.map((s,i) => { const t=parseTs(s); return { n:i+1, s, ts:t?t.ts:'', tl:t?t.len:0, lv:classify(s), start:!!t }; });
   // continuation lines inherit level of their parent entry; group into multi-line entries
   const entries=[]; let cur=null;
   for (const l of lines) {
@@ -525,7 +531,7 @@ $('collapseAll').onclick = () => {
 $('resizer').onmousedown = e => {
   e.preventDefault();
   const aside = document.querySelector('aside'), r = $('resizer'); r.classList.add('drag');
-  const move = ev => { aside.style.width = Math.max(160, ev.clientX - aside.getBoundingClientRect().left) + 'px'; renderRaw(); };
+  const move = ev => { aside.style.width = Math.max(160, ev.clientX - aside.getBoundingClientRect().left) + 'px'; relayout(); };
   const up = () => { r.classList.remove('drag'); document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); };
   document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
 };
@@ -535,7 +541,7 @@ function switchTab(t){
   state.tab=t;
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on', b.dataset.tab===t));
   document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on', p.id==='pane-'+t));
-  if (t==='raw') requestAnimationFrame(renderRaw);
+  if (t==='raw') requestAnimationFrame(relayout);
 }
 $('tabs').onclick = e => { const b=e.target.closest('.tab'); if (b) switchTab(b.dataset.tab); };
 
@@ -624,7 +630,7 @@ $('errList').onclick = e => { const b=e.target.closest('[data-go]'); if(!b) retu
 
 /* ---------- raw viewer (virtualised) ---------- */
 const RH=20;
-const raw = { file:null, rows:[], hits:[], hit:-1, table:true, wrap:false, q:'', flash:0 };
+const raw = { file:null, rows:[], hits:[], hit:-1, table:true, wrap:true, q:'', off:[0], cap:80 };
 function hl(html, q){
   if (!q) return html;
   const re=new RegExp(esc(q).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'ig');
@@ -639,6 +645,32 @@ function loadRaw(){
   if (state.sel>=0) $('rawFile').value=state.sel;
   applyRawFilter();
 }
+const msgOf = l => (raw.table && l.tl ? l.s.slice(l.tl) : l.s).replace(/\t/g,'    ');
+let charW = 0;
+function measureChar(){
+  const c = document.createElement('canvas').getContext('2d');
+  c.font = getComputedStyle($('rawScroll')).font;
+  charW = c.measureText('M').width || 7.8;
+}
+// row offsets: fixed height when not wrapping, otherwise rows grow with the number of wrapped lines
+function layoutRaw(){
+  const sc=$('rawScroll'), n=raw.rows.length, off=new Array(n+1);
+  off[0]=0;
+  if (raw.wrap && sc.clientWidth) {
+    if (!charW) measureChar();
+    const avail = sc.clientWidth - 60 - (raw.table ? 32*charW + 24 : 0) - 24;
+    raw.cap = Math.max(10, Math.floor(avail / charW));
+    for (let i=0;i<n;i++) off[i+1] = off[i] + Math.max(1, Math.ceil(msgOf(raw.rows[i]).length / raw.cap)) * RH;
+  } else for (let i=0;i<n;i++) off[i+1] = (i+1)*RH;
+  raw.off = off;
+  $('rawInner').style.height = off[n] + 'px';
+  $('rawInner').classList.toggle('wrap', raw.wrap);
+}
+const rowAt = y => { const o=raw.off; let lo=0, hi=raw.rows.length; while(lo<hi){ const m=(lo+hi)>>1; if (o[m+1]<=y) lo=m+1; else hi=m; } return lo; };
+function relayout(){
+  const sc=$('rawScroll'), top = raw.rows.length ? rowAt(sc.scrollTop) : 0;
+  layoutRaw(); sc.scrollTop = raw.off[Math.min(top, raw.rows.length)] || 0; renderRaw();
+}
 function applyRawFilter(){
   const f=raw.file, lv=$('rawLevel').value;
   raw.q=$('rawSearch').value;
@@ -649,41 +681,42 @@ function applyRawFilter(){
   $('hitCount').textContent = q ? (raw.hits.length ? `1 / ${raw.hits.length}` : 'no matches') : '';
   $('sbPath').textContent = f ? f.path : 'Ready';
   $('sbLines').textContent = f ? `${raw.rows.length.toLocaleString()}${raw.rows.length!==f.lines.length?' of '+f.lines.length.toLocaleString():''} lines` : '';
-  $('rawInner').style.height = raw.rows.length*RH + 'px';
+  layoutRaw();
   $('rawScroll').scrollTop = 0;
   if (raw.hit>=0) scrollToRow(raw.hits[0]); else renderRaw();
 }
 function scrollToRow(i){
-  const sc=$('rawScroll'); sc.scrollTop = Math.max(0, i*RH - sc.clientHeight/2); renderRaw();
+  const sc=$('rawScroll'); sc.scrollTop = Math.max(0, raw.off[i] - sc.clientHeight/2); renderRaw();
 }
 function renderRaw(){
   const sc=$('rawScroll'), inner=$('rawInner');
   if (!sc.clientHeight) return;
-  const start=Math.max(0, Math.floor(sc.scrollTop/RH)-10), end=Math.min(raw.rows.length, Math.ceil((sc.scrollTop+sc.clientHeight)/RH)+10);
+  if (!state.files.length) { inner.innerHTML = `<div class="welcome" style="position:static">${welcome()}</div>`; inner.style.height='auto'; inner.style.minWidth=''; return; }
+  if (raw.off.length !== raw.rows.length+1) layoutRaw();
+  const start=Math.max(0, rowAt(sc.scrollTop)-10), end=Math.min(raw.rows.length, rowAt(sc.scrollTop+sc.clientHeight)+10);
   const q=raw.q, curHit = raw.hit>=0 ? raw.hits[raw.hit] : -1;
   let html='', maxLen=0;
-  if (!state.files.length) { inner.innerHTML = `<div class="welcome" style="position:static">${welcome()}</div>`; inner.style.height='auto'; return; }
   for (let i=start;i<end;i++) {
-    const l=raw.rows[i];
-    const msg = raw.table && l.ts && l.s.startsWith(l.ts) ? l.s.slice(l.ts.length) : l.s;
-    html += `<div class="rl ${l.lv==='E'||l.lv==='W'?l.lv:''} ${i===curHit?'hit':''}" style="top:${i*RH}px">
-      <span class="n">${l.n}</span>${raw.table?`<span class="t">${esc(l.ts)}</span><span class="lv ${l.lv}">${{E:'ERROR',W:'WARN',I:'INFO',D:'DEBUG'}[l.lv]||''}</span>`:''}<span class="m">${hl(esc(msg.replace(/\t/g,'    ')), q)}</span></div>`;
+    const l=raw.rows[i], msg=msgOf(l);
+    maxLen=Math.max(maxLen, msg.length);
+    html += `<div class="rl ${l.lv==='E'||l.lv==='W'?l.lv:''} ${i===curHit?'hit':''}" style="top:${raw.off[i]}px;height:${raw.off[i+1]-raw.off[i]}px">
+      <span class="n">${l.n}</span>${raw.table?`<span class="t">${esc(l.ts)}</span><span class="lv ${l.lv}">${{E:'ERROR',W:'WARN',I:'INFO',D:'DEBUG'}[l.lv]||''}</span>`:''}<span class="m">${hl(esc(msg), q)}</span></div>`;
   }
   inner.innerHTML = html;
-  // widest visible line drives horizontal scroll
-  for (let i=start;i<end;i++) maxLen=Math.max(maxLen, raw.rows[i].s.length);
-  inner.style.minWidth = (64 + (raw.table?222:0) + maxLen*7.6 + 40) + 'px';
+  // without wrapping, the widest visible line drives the horizontal scroll
+  inner.style.minWidth = raw.wrap ? '' : (64 + (raw.table ? 32*(charW||7.8) + 24 : 0) + maxLen*(charW||7.8) + 40) + 'px';
 }
 $('rawScroll').addEventListener('scroll', () => requestAnimationFrame(renderRaw));
-window.addEventListener('resize', renderRaw);
+window.addEventListener('resize', relayout);
 $('rawFile').onchange = e => { state.sel=+e.target.value; renderFiles(); loadRaw(); };
 let rawTimer; $('rawSearch').oninput = () => { clearTimeout(rawTimer); rawTimer=setTimeout(applyRawFilter,150); };
 $('rawLevel').onchange = applyRawFilter;
 function stepHit(d){ if(!raw.hits.length) return; raw.hit=(raw.hit+d+raw.hits.length)%raw.hits.length; $('hitCount').textContent=`${raw.hit+1} / ${raw.hits.length}`; scrollToRow(raw.hits[raw.hit]); }
 $('nextHit').onclick=()=>stepHit(1); $('prevHit').onclick=()=>stepHit(-1);
 $('rawSearch').onkeydown = e => { if (e.key==='Enter') { clearTimeout(rawTimer); if(raw.q!==e.target.value) applyRawFilter(); else stepHit(e.shiftKey?-1:1); } };
-$('viewMode').onclick = () => { raw.table=!raw.table; $('viewMode').textContent = raw.table?'Table view':'Plain text'; $('viewMode').classList.toggle('active',!raw.table); renderRaw(); };
-$('wrapBtn').style.display='none';
+$('viewMode').onclick = () => { raw.table=!raw.table; $('viewMode').textContent = raw.table?'Table view':'Plain text'; $('viewMode').classList.toggle('active',!raw.table); relayout(); };
+$('wrapBtn').onclick = () => { raw.wrap=!raw.wrap; $('wrapBtn').textContent = raw.wrap?'Wrap: on':'Wrap: off'; $('wrapBtn').classList.toggle('active',raw.wrap); relayout(); };
+$('wrapBtn').textContent='Wrap: on'; $('wrapBtn').classList.add('active');
 $('copyBtn').onclick = () => raw.file && copyText(raw.rows.map(l=>l.s).join('\n'));
 $('dlBtn').onclick = () => { if(!raw.file) return; const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([raw.file.text],{type:'text/plain'})); a.download=raw.file.short; a.click(); URL.revokeObjectURL(a.href); };
 function gotoRaw(fileId, line){
