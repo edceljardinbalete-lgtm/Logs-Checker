@@ -33,11 +33,12 @@ header h1 .logo{width:26px;height:26px;border-radius:7px;background:var(--accent
 input[type=search],input[type=text],select{border:1px solid var(--border);background:var(--panel);border-radius:8px;padding:6px 10px;outline:none}
 input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 main{flex:1;display:flex;min-height:0}
-aside{width:280px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+aside{width:220px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
 aside h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:14px 14px 6px}
-.drop{margin:12px;border:2px dashed var(--border);border-radius:12px;padding:16px 10px;text-align:center;color:var(--muted);transition:.15s}
-.drop.over{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
-.drop b{display:block;color:var(--text);margin-bottom:2px}
+.loadbar{display:flex;gap:6px;padding:10px 10px 4px}
+.loadbar .btn{justify-content:center}
+#drop{flex:1;border-style:dashed}
+#drop.over{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 .files{overflow:auto;flex:1;padding:0 8px 8px}
 .file{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;cursor:pointer}
 .file:hover{background:var(--panel2)}
@@ -132,12 +133,14 @@ kbd{background:var(--panel2);border:1px solid var(--border);border-bottom-width:
   <span class="spacer"></span>
   <button class="btn" id="helpBtn" title="Help &amp; shortcuts">? Help</button>
   <button class="btn" id="themeBtn" title="Toggle dark mode">🌓</button>
-  <button class="btn primary" id="browseBtn">＋ Open logs</button>
   <input type="file" id="fileInput" multiple hidden accept=".log,.txt,.zip,.tgz,.gz,.out,.csv,*/*">
 </header>
 <main>
   <aside>
-    <div class="drop" id="drop"><b>Drop log files here</b>.log, .txt, .zip, .tgz — or click to browse</div>
+    <div class="loadbar">
+      <button class="btn primary" id="drop" title="Click to browse, or drop files here (.log, .txt, .zip, .tgz)">＋ Open logs</button>
+      <button class="btn" id="clearBtn" title="Remove all loaded files" disabled>Clear</button>
+    </div>
     <h2>Files <span id="fileCount"></span></h2>
     <div class="files" id="files"></div>
   </aside>
@@ -225,12 +228,17 @@ $('themeBtn').onclick = () => { const d=document.documentElement; d.dataset.them
 $('helpBtn').onclick = () => $('help').showModal();
 
 /* ---------- file intake ---------- */
-$('browseBtn').onclick = () => $('fileInput').click();
 $('drop').onclick = () => $('fileInput').click();
 $('fileInput').onchange = e => { ingest([...e.target.files]); e.target.value=''; };
-['dragenter','dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
-['dragleave','drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); if(ev==='drop' || e.target===document.documentElement) $('drop').classList.remove('over'); }));
-document.addEventListener('drop', e => { if (e.dataTransfer?.files?.length) ingest([...e.dataTransfer.files]); });
+['dragenter','dragover'].forEach(ev => $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave','drop'].forEach(ev => $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.remove('over'); if (ev==='drop' && e.dataTransfer?.files?.length) ingest([...e.dataTransfer.files]); }));
+// stop the browser from navigating to a file dropped outside the button
+['dragover','drop'].forEach(ev => document.addEventListener(ev, e => e.preventDefault()));
+$('clearBtn').onclick = () => {
+  state.files = []; state.sel = -1; state.txSel = null; state.errType = 'all';
+  ['txSearch','errSearch','rawSearch'].forEach(id => $(id).value = ''); $('txStatus').value = ''; $('rawLevel').value = '';
+  rebuild(); toast('Cleared');
+};
 
 async function ingest(list){
   let added = 0;
@@ -438,6 +446,7 @@ function switchTab(t){
 $('tabs').onclick = e => { const b=e.target.closest('.tab'); if (b) switchTab(b.dataset.tab); };
 
 function rebuild(){
+  $('clearBtn').disabled = !state.files.length;
   buildAnalysis();
   renderFiles();
   $('bTx').textContent = state.txs.length;
@@ -466,7 +475,7 @@ function renderTxList(){
     </div>`).join('') : '<div class="empty-note">No transactions match. Transactions are detected from invoice / receipt / session identifiers in your logs.</div>';
   renderTxDetail();
 }
-function welcome(){ return `<div class="welcome"><div class="big">📂</div><h2>Drop your logs to get started</h2><p>Open a log file or archive on the left (or use <b>Open logs</b>). Transactions, errors and the raw files will appear here.</p></div>`; }
+function welcome(){ return `<div class="welcome"><div class="big">📂</div><h2>Open your logs to get started</h2><p>Click <b>Open logs</b> at the top left (or drop files on it). Transactions, errors and the raw files will appear here.</p></div>`; }
 $('txList').onclick = e => { const el=e.target.closest('.tx'); if(!el) return; state.txSel=state.txs[+el.dataset.i]; renderTxList(); };
 $('txSearch').oninput = renderTxList; $('txStatus').onchange = renderTxList;
 
