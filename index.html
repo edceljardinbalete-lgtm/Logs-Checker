@@ -148,11 +148,26 @@ dialog{border:1px solid var(--border);border-radius:3px;background:var(--panel);
 dialog::backdrop{background:#0006}
 dialog h3{margin-top:0}
 kbd{background:var(--panel2);border:1px solid var(--border);border-bottom-width:2px;border-radius:3px;padding:0 5px;font-size:11px}
-@media(max-width:860px){aside{display:none}.txlist{width:40%}}
+#sideToggle{display:none}
+@media(max-width:860px){
+  #sideToggle{display:inline-flex}
+  main{position:relative}
+  aside{position:absolute;z-index:20;top:0;bottom:0;left:0;width:min(300px,85vw)!important;max-width:85vw;transform:translateX(-101%);transition:transform .15s;box-shadow:2px 0 8px rgba(0,0,0,.3)}
+  body.side-open aside{transform:none}
+  .resizer{display:none}
+  .tabs{overflow-x:auto}
+  .tab{white-space:nowrap}
+  .split{flex-direction:column}
+  .txlist{width:auto;height:35%;min-height:90px;border-right:0;border-bottom:1px solid var(--border)}
+  .txdetail{padding:8px 10px}
+  .toolbar input[type=search]{flex:1 1 140px;min-width:0;width:auto}
+  #rawFile{max-width:100%}
+}
 </style>
 </head>
 <body>
 <header>
+  <button class="btn sm" id="sideToggle" title="Show / hide files">☰ Files</button>
   <h1><span class="logo">≡</span> Log Reader</h1>
   <span class="spacer"></span>
   <button class="btn sm" id="helpBtn" title="Help &amp; shortcuts">? Help</button>
@@ -784,7 +799,9 @@ function renderRaw(){
   inner.style.minWidth = raw.wrap ? '' : (64 + (tbl() ? 32*(charW||7.8) + 24 : 0) + maxLen*(charW||7.8) + 40) + 'px';
 }
 $('rawScroll').addEventListener('scroll', () => requestAnimationFrame(renderRaw));
-window.addEventListener('resize', relayout);
+window.addEventListener('resize', () => { if (innerWidth > 860) document.body.classList.remove('side-open'); relayout(); });
+$('sideToggle').onclick = () => document.body.classList.toggle('side-open');
+$('files').addEventListener('click', () => { if (innerWidth <= 860) document.body.classList.remove('side-open'); });
 $('rawFile').onchange = e => { state.sel=+e.target.value; renderFiles(); loadRaw(); };
 let rawTimer; $('rawSearch').oninput = () => { clearTimeout(rawTimer); rawTimer=setTimeout(applyRawFilter,150); };
 $('rawLevel').onchange = applyRawFilter;
